@@ -3,6 +3,7 @@
 #if !MESHTASTIC_EXCLUDE_GPS
 
 #include "GPSStatus.h"
+#include "GpioLogic.h"
 #include "Observer.h"
 #include "TinyGPS++.h"
 #include "concurrency/OSThread.h"
@@ -28,7 +29,9 @@ typedef enum {
     GNSS_MODEL_UBLOX,
     GNSS_MODEL_UC6580,
     GNSS_MODEL_UNKNOWN,
-    GNSS_MODEL_MTK_L76B
+    GNSS_MODEL_MTK_L76B,
+    GNSS_MODEL_AG3335,
+    GNSS_MODEL_AG3352
 } GnssModel_t;
 
 typedef enum {
@@ -50,7 +53,7 @@ enum GPSPowerState : uint8_t {
 const char *getDOPString(uint32_t dop);
 
 /**
- * A gps class that only reads from the GPS periodically (and FIXME - eventually keeps the gps powered down except when reading)
+ * A gps class that only reads from the GPS periodically and keeps the gps powered down except when reading
  *
  * When new data is available it will notify observers.
  */
@@ -72,7 +75,6 @@ class GPS : private concurrency::OSThread
     uint32_t lastWakeStartMsec = 0, lastSleepStartMsec = 0, lastFixStartMsec = 0;
     uint32_t rx_gpio = 0;
     uint32_t tx_gpio = 0;
-    uint32_t en_gpio = 0;
 
     int speedSelect = 0;
     int probeTries = 2;
@@ -150,6 +152,13 @@ class GPS : private concurrency::OSThread
     static const uint8_t _message_CAS_CFG_RATE_1HZ[];
 
     meshtastic_Position p = meshtastic_Position_init_default;
+
+    /** This is normally bound to config.position.gps_en_gpio but some rare boards (like heltec tracker) need more advanced
+     * implementations. Those boards will set this public variable to a custom implementation.
+     *
+     * Normally set by GPS::createGPS()
+     */
+    GpioVirtPin *enablePin = NULL;
 
     GPS() : concurrency::OSThread("GPS") {}
 
@@ -289,7 +298,6 @@ class GPS : private concurrency::OSThread
     virtual int32_t runOnce() override;
 
     // Get GNSS model
-    String getNMEA();
     GnssModel_t probe(int serialSpeed);
 
     // delay counter to allow more sats before fixed position stops GPS thread

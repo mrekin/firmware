@@ -21,6 +21,7 @@
 #include "Default.h"
 #include "serialization/JSON.h"
 #include "serialization/MeshPacketSerializer.h"
+#include <Throttle.h>
 #include <assert.h>
 
 const int reconnectMax = 5;
@@ -158,7 +159,22 @@ void MQTT::onReceive(char *topic, byte *payload, size_t length)
                     meshtastic_MeshPacket *p = packetPool.allocCopy(*e.packet);
                     p->via_mqtt = true; // Mark that the packet was received via MQTT
 
+                    if (p->from == 0 || p->from == nodeDB->getNodeNum()) {
+                        LOG_INFO("Ignoring downlink message we originally sent.\n");
+                        packetPool.release(p);
+                        return;
+                    }
                     if (p->which_payload_variant == meshtastic_MeshPacket_decoded_tag) {
+                        if (moduleConfig.mqtt.encryption_enabled) {
+                            LOG_INFO("Ignoring decoded message on MQTT, encryption is enabled.\n");
+                            packetPool.release(p);
+                            return;
+                        }
+                        if (p->decoded.portnum == meshtastic_PortNum_ADMIN_APP) {
+                            LOG_INFO("Ignoring decoded admin packet.\n");
+                            packetPool.release(p);
+                            return;
+                        }
                         p->channel = ch.index;
                     }
 
@@ -468,7 +484,7 @@ void MQTT::publishQueuedMessages()
         LOG_DEBUG("Publishing enqueued MQTT message\n");
         // FIXME - this size calculation is super sloppy, but it will go away once we dynamically alloc meshpackets
         meshtastic_ServiceEnvelope *env = mqttQueue.dequeuePtr(0);
-        static uint8_t bytes[meshtastic_MeshPacket_size + 64];
+        static uint8_t bytes[meshtastic_MqttClientProxyMessage_size];
         size_t numBytes = pb_encode_to_bytes(bytes, sizeof(bytes), &meshtastic_ServiceEnvelope_msg, env);
         std::string topic;
         if (env->packet->pki_encrypted) {
@@ -555,7 +571,7 @@ void MQTT::onSend(const meshtastic_MeshPacket &mp, const meshtastic_MeshPacket &
 
         if (moduleConfig.mqtt.proxy_to_client_enabled || this->isConnectedDirectly()) {
             // FIXME - this size calculation is super sloppy, but it will go away once we dynamically alloc meshpackets
-            static uint8_t bytes[meshtastic_MeshPacket_size + 64];
+            static uint8_t bytes[meshtastic_MqttClientProxyMessage_size];
             size_t numBytes = pb_encode_to_bytes(bytes, sizeof(bytes), &meshtastic_ServiceEnvelope_msg, env);
             std::string topic = cryptTopic + channelId + "/" + owner.id;
             LOG_DEBUG("MQTT Publish %s, %u bytes\n", topic.c_str(), numBytes);
@@ -595,7 +611,7 @@ void MQTT::perhapsReportToMap()
     if (!moduleConfig.mqtt.map_reporting_enabled || !(moduleConfig.mqtt.proxy_to_client_enabled || isConnectedDirectly()))
         return;
 
-    if (millis() - last_report_to_map < map_publish_interval_msecs) {
+    if (Throttle::isWithinTimespanMs(last_report_to_map, map_publish_interval_msecs)) {
         return;
     } else {
         if (map_position_precision == 0 || (localPosition.latitude_i == 0 && localPosition.longitude_i == 0)) {
@@ -651,7 +667,7 @@ void MQTT::perhapsReportToMap()
         se->packet = mp;
 
         // FIXME - this size calculation is super sloppy, but it will go away once we dynamically alloc meshpackets
-        static uint8_t bytes[meshtastic_MeshPacket_size + 64];
+        static uint8_t bytes[meshtastic_MqttClientProxyMessage_size];
         size_t numBytes = pb_encode_to_bytes(bytes, sizeof(bytes), &meshtastic_ServiceEnvelope_msg, se);
 
         LOG_INFO("MQTT Publish map report to %s\n", mapTopic.c_str());

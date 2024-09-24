@@ -18,6 +18,7 @@
 #include "Led.h"
 #include "RTC.h"
 #include "SPILock.h"
+#include "Throttle.h"
 #include "concurrency/OSThread.h"
 #include "concurrency/Periodic.h"
 #include "detect/ScanI2C.h"
@@ -360,6 +361,8 @@ void setup()
     Wire1.begin();
 #elif defined(I2C_SDA1) && !defined(ARCH_RP2040)
     Wire1.begin(I2C_SDA1, I2C_SCL1);
+#elif WIRE_INTERFACES_COUNT == 2
+    Wire1.begin();
 #endif
 
 #if defined(I2C_SDA) && defined(ARCH_RP2040)
@@ -390,7 +393,7 @@ void setup()
 #endif
 
 #ifdef AQ_SET_PIN
-    // RAK-12039 set pin for Air quality sensor
+    // RAK-12039 set pin for Air quality sensor. Detectable on I2C after ~3 seconds, so we need to rescan later
     pinMode(AQ_SET_PIN, OUTPUT);
     digitalWrite(AQ_SET_PIN, HIGH);
 #endif
@@ -426,6 +429,8 @@ void setup()
     i2cScanner->scanPort(ScanI2C::I2CPort::WIRE1);
 #elif defined(I2C_SDA1) && !defined(ARCH_RP2040)
     Wire1.begin(I2C_SDA1, I2C_SCL1);
+    i2cScanner->scanPort(ScanI2C::I2CPort::WIRE1);
+#elif defined(NRF52840_XXAA) && (WIRE_INTERFACES_COUNT == 2)
     i2cScanner->scanPort(ScanI2C::I2CPort::WIRE1);
 #endif
 
@@ -560,6 +565,7 @@ void setup()
     SCANNER_TO_SENSORS_MAP(ScanI2C::DeviceType::QMC6310, meshtastic_TelemetrySensorType_QMC6310)
     SCANNER_TO_SENSORS_MAP(ScanI2C::DeviceType::QMI8658, meshtastic_TelemetrySensorType_QMI8658)
     SCANNER_TO_SENSORS_MAP(ScanI2C::DeviceType::QMC5883L, meshtastic_TelemetrySensorType_QMC5883L)
+    SCANNER_TO_SENSORS_MAP(ScanI2C::DeviceType::HMC5883L, meshtastic_TelemetrySensorType_QMC5883L)
     SCANNER_TO_SENSORS_MAP(ScanI2C::DeviceType::PMSA0031, meshtastic_TelemetrySensorType_PMSA003I)
     SCANNER_TO_SENSORS_MAP(ScanI2C::DeviceType::RCWL9620, meshtastic_TelemetrySensorType_RCWL9620)
     SCANNER_TO_SENSORS_MAP(ScanI2C::DeviceType::VEML7700, meshtastic_TelemetrySensorType_VEML7700)
@@ -586,6 +592,9 @@ void setup()
 
     // Hello
     printInfo();
+#ifdef BUILD_EPOCH
+    LOG_INFO("Build timestamp: %ld\n", BUILD_EPOCH);
+#endif
 
 #ifdef ARCH_ESP32
     esp32Setup();
@@ -745,8 +754,8 @@ void setup()
 #if !MESHTASTIC_EXCLUDE_I2C
 // Don't call screen setup until after nodedb is setup (because we need
 // the current region name)
-#if defined(ST7735_CS) || defined(USE_EINK) || defined(ILI9341_DRIVER) || defined(ST7789_CS) || defined(HX8357_CS) ||            \
-    defined(USE_ST7789)
+#if defined(ST7701_CS) || defined(ST7735_CS) || defined(USE_EINK) || defined(ILI9341_DRIVER) || defined(ST7789_CS) ||            \
+    defined(HX8357_CS) || defined(USE_ST7789)
     screen->setup();
 #elif defined(ARCH_PORTDUINO)
     if (screen_found.port != ScanI2C::I2CPort::NO_I2C || settingsMap[displayPanel]) {
@@ -759,12 +768,6 @@ void setup()
 #endif
 
     screen->print("Started...\n");
-
-#ifdef SX126X_ANT_SW
-    // make analog PA vs not PA switch on SX126x eval board work properly
-    pinMode(SX126X_ANT_SW, OUTPUT);
-    digitalWrite(SX126X_ANT_SW, 1);
-#endif
 
 #ifdef PIN_PWR_DELAY_MS
     // This may be required to give the peripherals time to power up.
@@ -1093,6 +1096,9 @@ extern meshtastic_DeviceMetadata getDeviceMetadata()
     deviceMetadata.position_flags = config.position.position_flags;
     deviceMetadata.hw_model = HW_VENDOR;
     deviceMetadata.hasRemoteHardware = moduleConfig.remote_hardware.enabled;
+#if !(MESHTASTIC_EXCLUDE_PKI)
+    deviceMetadata.hasPKC = true;
+#endif
     return deviceMetadata;
 }
 #ifndef PIO_UNIT_TESTING
@@ -1117,7 +1123,7 @@ void loop()
 
 #ifdef DEBUG_STACK
     static uint32_t lastPrint = 0;
-    if (millis() - lastPrint > 10 * 1000L) {
+    if (!Throttle::isWithinTimespanMs(lastPrint, 10 * 1000L)) {
         lastPrint = millis();
         meshtastic::printThreadInfo("main");
     }

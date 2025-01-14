@@ -10,7 +10,7 @@
 #include "MeshTypes.h"
 #include "Observer.h"
 #include "PointerQueue.h"
-#if defined(ARCH_PORTDUINO) && !HAS_RADIO
+#if defined(ARCH_PORTDUINO)
 #include "../platform/portduino/SimRadio.h"
 #endif
 #if defined(ARCH_ESP32) || defined(ARCH_PORTDUINO)
@@ -142,7 +142,7 @@ class MeshService
     void sendToPhone(meshtastic_MeshPacket *p);
 
     /// Send an MQTT message to the phone for client proxying
-    void sendMqttMessageToClientProxy(meshtastic_MqttClientProxyMessage *m);
+    virtual void sendMqttMessageToClientProxy(meshtastic_MqttClientProxyMessage *m);
 
     /// Send a ClientNotification to the phone
     void sendClientNotification(meshtastic_ClientNotification *cn);

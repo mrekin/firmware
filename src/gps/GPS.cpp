@@ -437,6 +437,10 @@ static const int serialSpeeds[3] = {9600, 115200, 38400};
 static const int rareSerialSpeeds[3] = {4800, 57600, GPS_BAUDRATE};
 #endif
 
+#ifndef GPS_PROBETRIES
+#define GPS_PROBETRIES 2
+#endif
+
 /**
  * @brief  Setup the GPS based on the model detected.
  *  We detect the GPS by cycling through a set of baud rates, first common then rare.
@@ -449,7 +453,18 @@ bool GPS::setup()
     if (!didSerialInit) {
         int msglen = 0;
         if (tx_gpio && gnssModel == GNSS_MODEL_UNKNOWN) {
-            if (probeTries < 2) {
+#ifdef TRACKER_T1000_E
+            // add power up/down strategy, improve ag3335 detection success
+            digitalWrite(PIN_GPS_EN, LOW);
+            delay(500);
+            digitalWrite(GPS_VRTC_EN, LOW);
+            delay(1000);
+            digitalWrite(GPS_VRTC_EN, HIGH);
+            delay(500);
+            digitalWrite(PIN_GPS_EN, HIGH);
+            delay(1000);
+#endif
+            if (probeTries < GPS_PROBETRIES) {
                 LOG_DEBUG("Probe for GPS at %d", serialSpeeds[speedSelect]);
                 gnssModel = probe(serialSpeeds[speedSelect]);
                 if (gnssModel == GNSS_MODEL_UNKNOWN) {
@@ -460,7 +475,7 @@ bool GPS::setup()
                 }
             }
             // Rare Serial Speeds
-            if (probeTries == 2) {
+            if (probeTries == GPS_PROBETRIES) {
                 LOG_DEBUG("Probe for GPS at %d", rareSerialSpeeds[speedSelect]);
                 gnssModel = probe(rareSerialSpeeds[speedSelect]);
                 if (gnssModel == GNSS_MODEL_UNKNOWN) {
@@ -772,6 +787,9 @@ void GPS::setPowerState(GPSPowerState newState, uint32_t sleepTime)
         setPowerPMU(true);                                        // Power (PMU): on
         writePinStandby(false);                                   // Standby (pin): awake (not standby)
         setPowerUBLOX(true);                                      // Standby (UBLOX): awake
+#ifdef GNSS_AIROHA
+        lastFixStartMsec = 0;
+#endif
         break;
 
     case GPS_SOFTSLEEP:
